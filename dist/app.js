@@ -4,6 +4,7 @@ const el = (id) => document.getElementById(id);
 const listEl = el("classList");
 const searchEl = el("searchInput");
 const scopeEl = el("scopeSelect");
+const descEl = el("searchDescToggle");
 const infoEl = el("listInfo");
 
 let activePath = null;
@@ -51,6 +52,7 @@ async function loadClasses() {
   const data = await DS.classes({
     search: searchEl.value.trim() || undefined,
     scope: scopeEl.value || undefined,
+    desc: descEl.checked || undefined,
     limit: 5000,
   });
   renderList(data);
@@ -246,6 +248,7 @@ searchEl.addEventListener("input", () => {
   debounceTimer = setTimeout(loadClasses, 180);
 });
 scopeEl.addEventListener("change", loadClasses);
+descEl.addEventListener("change", loadClasses);
 
 el("rawSlotsToggle").addEventListener("change", () => {
   if (lastDetail) renderSlots(lastDetail);

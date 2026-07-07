@@ -12,7 +12,7 @@
     <main class="details" id="details">
       <div class="empty" id="emptyState">
         <h1>DayZ Config Explorer</h1>
-        <p>Выберите класс в списке справа, чтобы увидеть его свойства (включая
+        <p>Выберите класс в списке слева, чтобы увидеть его свойства (включая
            наследуемые), слоты и предметы, которые в них подходят.</p>
         <div class="status" id="appStatus"></div>
       </div>
@@ -64,6 +64,7 @@
         <select id="scopeSelect" title="Область">
           <option value="">Все области</option>
         </select>
+        <label class="opt"><input type="checkbox" id="searchDescToggle" /> искать также в описании</label>
       </div>
       <div class="list-info" id="listInfo"></div>
       <ul class="class-list" id="classList"></ul>

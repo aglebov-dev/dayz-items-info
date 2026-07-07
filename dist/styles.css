@@ -28,13 +28,13 @@ html, body {
 
 /* ---- Sidebar (right) ---- */
 .sidebar {
-  order: 2;
+  order: 1;
   width: 380px; min-width: 320px;
   background: var(--panel);
-  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
   display: flex; flex-direction: column;
 }
-.search { padding: 12px; display: flex; gap: 8px; border-bottom: 1px solid var(--border); }
+.search { padding: 12px; display: flex; flex-wrap: wrap; gap: 8px; border-bottom: 1px solid var(--border); }
 .search input[type="search"] {
   flex: 1; padding: 8px 10px; border-radius: 6px;
   border: 1px solid var(--border); background: var(--bg); color: var(--text);
@@ -44,6 +44,11 @@ html, body {
   padding: 8px; border-radius: 6px; border: 1px solid var(--border);
   background: var(--bg); color: var(--text); max-width: 130px;
 }
+.search .opt {
+  flex-basis: 100%; display: flex; align-items: center; gap: 6px;
+  color: var(--muted); font-size: 12px; cursor: pointer; user-select: none;
+}
+.search .opt input { cursor: pointer; }
 .list-info { padding: 6px 14px; color: var(--muted); font-size: 12px; border-bottom: 1px solid var(--border); }
 .class-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
 .class-list li {
@@ -56,8 +61,8 @@ html, body {
 .class-list .cl-display { color: var(--muted); font-size: 12px; }
 .class-list .cl-scope { color: var(--accent); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
 
-/* ---- Details (left) ---- */
-.details { order: 1; flex: 1; overflow-y: auto; padding: 22px 26px; }
+/* ---- Details (right) ---- */
+.details { order: 2; flex: 1; overflow-y: auto; padding: 22px 26px; }
 .empty { max-width: 560px; margin: 12vh auto 0; color: var(--muted); text-align: center; }
 .empty h1 { color: var(--text); }
 
