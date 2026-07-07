@@ -1,64 +1,50 @@
-# DayZ Config Explorer (веб)
+# DayZ Config Static Site Generator
 
-ASP.NET Core приложение поверх парсера [`DayzConfigParser`](../DayzConfigParser): список
-классов с поиском справа, карточка выбранного класса слева (свойства с учётом наследования,
-слоты и совместимые предметы). Плейсхолдеры переводов (`$STR_…`) подменяются на русский из
-`stringtable.csv`.
+Собирает **статический сайт** (без бэкенда) из конфигов DayZ: парсер строит данные,
+переводит плейсхолдеры и пишет `dist/` — папку, которую можно залить на любой статический
+хостинг (GitHub Pages, S3, nginx…) и смотреть онлайн.
 
-## Запуск
+## Как это работает
 
+- Проект — консольное приложение, но **генерация запускается автоматически после билда**
+  (MSBuild‑таргет `GenerateStaticSite`, `AfterTargets="Build"`). То есть достаточно собрать
+  проект в IDE — `dist/` обновится.
+- В `dist/`:
+  - `data.json` — весь контент (список классов + карточки), построенный
+    [`SiteExport.BuildSite`](../DayzConfigParser/Export.cs);
+  - `index.html`, `styles.css`, `app.js` — фронтенд, **скопированный** из
+    [`../DayzConfigWeb/wwwroot`](../DayzConfigWeb/wwwroot) (один исходник на live и static);
+  - `datasource.js` — статическая реализация `window.DS` (читает `data.json` вместо API).
+
+Фронтенд одинаковый для live‑веба и статики; отличается только `datasource.js`
+(API‑версия в `wwwroot`, static‑версия пишется генератором).
+
+## Сборка
+
+В IDE: собрать проект `DayzConfigStaticGen` → `dist/` готов.
+
+CLI:
 ```powershell
-cd D:\dayz-sources\_tools\DayzConfigWeb
-dotnet run -c Release -- --urls http://localhost:5173
-# открыть http://localhost:5173
+cd D:\dayz-sources\_tools\DayzConfigStaticGen
+dotnet build                      # соберёт и сгенерирует dist/
+dotnet build -p:SkipSiteGen=true  # только сборка, без генерации
 ```
 
-Пути к данным — в [`appsettings.json`](appsettings.json):
+Пути и язык — в [`appsettings.json`](appsettings.json) (`ConfigFolder`, `LanguageFolder`,
+`Language`, `FrontendFolder`, `OutputFolder`). Читается из папки проекта при запуске.
 
-| Ключ | Значение |
-|---|---|
-| `Dayz:ConfigFolder` | папка с `config.cpp` (по умолчанию `kr_weaponpack_cfg`) |
-| `Dayz:LanguageFolder` | папка со `stringtable.csv` (`kr_weaponpack/.../data/language`) |
-| `Dayz:Language` | колонка перевода (`russian`) |
+## Публикация
 
-## Как устроено
+Залейте **содержимое `dist/`** на статический хостинг. Включите gzip на сервере — `data.json`
+(~10 МБ) сжимается до ~0.6 МБ. Локальная проверка:
+```powershell
+python -m http.server 5174 --directory dist
+# http://localhost:5174
+```
 
-- **`Program.cs`** — грузит модель один раз при старте (`ModelHost`), применяет переводы,
-  отдаёт статику из `wwwroot` и JSON‑API.
-- **`wwwroot/`** — SPA без сборки: `index.html` + `styles.css` + `app.js` (vanilla JS).
+## Только `scope = 2`
 
-### API
-
-| Метод | Ответ |
-|---|---|
-| `GET /api/status` | папка конфигов, число файлов/классов/переводов (для диагностики) |
-| `GET /api/scopes` | области верхнего уровня (`cfgWeapons`, `CfgVehicles`, …) + счётчики |
-| `GET /api/classes?search=&scope=&limit=` | список классов‑предметов (имя, путь, область, `displayName`) |
-| `GET /api/class?path=cfgWeapons.kr_FN_F2000` | карточка: свойства (с флагом наследования и источником), цепочка наследования, `slots` (сырые) и `slotGroups` (логические) |
-
-«Классы‑предметы» = прямые потомки области (глубина 2) **с `scope = 2`** (реальные,
-спавнящиеся предметы); базовые/абстрактные классы и вложенные под‑блоки (`OpticsInfo`,
-`DamageSystem`) в список не попадают. Фильтр и формирование JSON — в общем
-[`SiteExport`](../DayzConfigParser/Export.cs), который используют и live‑API, и генератор
-статики.
-
-Фронтенд обращается к данным только через `window.DS` (см. `wwwroot/datasource.js`), поэтому
-тот же `app.js`/`index.html`/`styles.css` работает и в live‑режиме (через API), и в статике
-(через `data.json`). Статическую сборку делает [`DayzConfigStaticGen`](../DayzConfigStaticGen)
-— папку `dist/` можно залить на любой хостинг без бэкенда.
-
-Список грузится целиком при открытии страницы; в пустой карточке показан статус загрузки
-(число классов/переводов и путь `ConfigFolder`, если данных нет). Слоты по умолчанию
-показаны **сгруппированными** в логические точки крепления; чекбокс «показать все слоты»
-переключает на сырой список из `attachments[]`.
-
-## Переводы (в модели)
-
-Загрузка и подмена живут в парсере, поэтому доступны и в CLI, и в вебе:
-
-- `TranslationTable.LoadFolder(langFolder, "russian")` — рекурсивно читает все
-  `stringtable.csv` (потоковый CSV‑парсер: кавычки, `""`, переносы строк).
-- `ConfigModel.LoadTranslations(langFolder)` → `ApplyTranslations` проставляет
-  `ScalarValue.Display` для строк‑плейсхолдеров (`$STR_…`/`#STR_…`).
-- `ScalarValue.Effective` / `AsString()` возвращают перевод, если он есть, иначе исходный
-  ключ. `Raw` сохраняет оригинал.
+В список попадают лишь классы с `scope = 2` (реальные, спавнящиеся предметы) — базовые и
+абстрактные классы исключены. Фильтр — `SiteExport.IsListed`, общий и для live‑веба, и для
+статики. Предметы в слотах тоже отфильтрованы по `scope = 2`, чтобы каждая ссылка вела на
+существующую карточку.

@@ -1,89 +1,99 @@
+using System.Text.Encodings.Web;
+using System.Text.Json;
 using DayzConfig;
 
-var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddSingleton<ModelHost>();
+// Static-site generator: parses the DayZ config, resolves translations, and writes a
+// self-contained folder (data.json + copied frontend) that can be uploaded to any static
+// host and browsed offline — no ASP.NET backend required.
 
-var app = builder.Build();
+var jsonRead = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+string settingsPath = File.Exists("appsettings.json")
+    ? "appsettings.json"
+    : Path.Combine(AppContext.BaseDirectory, "appsettings.json");
 
-app.UseDefaultFiles();
-app.UseStaticFiles();
+var root = JsonSerializer.Deserialize<RootSettings>(File.ReadAllText(settingsPath), jsonRead)
+           ?? throw new InvalidOperationException("appsettings.json could not be read.");
+var s = root.Dayz;
 
-// Force the model to load eagerly at startup so the first request is fast.
-var host = app.Services.GetRequiredService<ModelHost>();
-app.Logger.LogInformation("Loaded {Files} files, {Classes} classes, {Listed} listed (scope=2), {Tr} translations.",
-    host.Model.ParsedFiles.Count, host.ClassCount, host.ItemClasses.Count, host.Model.Translations?.Count ?? 0);
+string configFolder = s.ConfigFolder ?? throw new InvalidOperationException("Dayz:ConfigFolder is required.");
+string frontendFolder = Path.GetFullPath(s.FrontendFolder ?? "../DayzConfigWeb/wwwroot");
+string outDir = Path.GetFullPath(s.OutputFolder ?? "dist");
 
-// ---- API -------------------------------------------------------------------
+Console.WriteLine($"[static-gen] parsing {configFolder}");
+var model = ConfigModel.LoadFolder(configFolder);
 
-app.MapGet("/api/status", (ModelHost h) => new
+if (!string.IsNullOrWhiteSpace(s.LanguageFolder) && Directory.Exists(s.LanguageFolder))
 {
-    configFolder = h.ConfigFolder,
-    files = h.Model.ParsedFiles.Count,
-    classes = h.ClassCount,
-    itemClasses = h.ItemClasses.Count,
-    translations = h.Model.Translations?.Count ?? 0,
-    parseErrors = h.Model.Errors.Count,
-});
+    model.LoadTranslations(s.LanguageFolder, s.Language ?? "russian");
+    Console.WriteLine($"[static-gen] translations: {model.Translations?.Count ?? 0} keys");
+}
 
-app.MapGet("/api/scopes", (ModelHost h) => SiteExport.Scopes(h.Model));
+var site = SiteExport.BuildSite(model, configFolder);
+int listedCount = SiteExport.Listed(model).Count();
 
-app.MapGet("/api/classes", (ModelHost h, string? search, string? scope, int? limit) =>
+Directory.CreateDirectory(outDir);
+
+var jsonWrite = new JsonSerializerOptions
 {
-    IEnumerable<ConfigClass> q = h.ItemClasses;
-    if (!string.IsNullOrWhiteSpace(scope))
-        q = q.Where(c => string.Equals(SiteExport.TopScope(c), scope, StringComparison.OrdinalIgnoreCase));
+    Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping, // keep Cyrillic readable
+    WriteIndented = false,
+};
+string dataPath = Path.Combine(outDir, "data.json");
+File.WriteAllText(dataPath, JsonSerializer.Serialize(site, jsonWrite));
 
-    if (!string.IsNullOrWhiteSpace(search))
-    {
-        string s = search.Trim();
-        q = q.Where(c =>
-            c.Name.Contains(s, StringComparison.OrdinalIgnoreCase) ||
-            (h.Model.GetString(c, "displayName")?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false));
-    }
-
-    var ordered = q.OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase).ToList();
-    int max = limit is > 0 ? Math.Min(limit.Value, 5000) : 500;
-    var items = ordered.Take(max).Select(c => SiteExport.Summary(h.Model, c));
-
-    return Results.Ok(new { total = ordered.Count, shown = Math.Min(max, ordered.Count), items });
-});
-
-app.MapGet("/api/class", (ModelHost h, string path) =>
+// Copy the shared frontend, then write the static data source (replaces the API one).
+foreach (var name in new[] { "index.html", "styles.css", "app.js" })
 {
-    var c = h.Model.FindByPath(path) ?? h.Model.Find(path);
-    if (c == null) return Results.NotFound(new { error = $"class '{path}' not found" });
-    return Results.Ok(SiteExport.Detail(h.Model, c, h.ConfigFolder));
-});
+    string src = Path.Combine(frontendFolder, name);
+    if (File.Exists(src)) File.Copy(src, Path.Combine(outDir, name), overwrite: true);
+    else Console.WriteLine($"[static-gen] WARNING: frontend file not found: {src}");
+}
+File.WriteAllText(Path.Combine(outDir, "datasource.js"), StaticDataSourceJs);
 
-app.Run();
+long size = new FileInfo(dataPath).Length;
+Console.WriteLine($"[static-gen] {listedCount} classes (scope=2), data.json {size / 1024.0:F0} KB");
+Console.WriteLine($"[static-gen] wrote static site to: {outDir}");
+return 0;
 
 
-// ---- Model host ------------------------------------------------------------
+record DayzSettings(
+    string? ConfigFolder, string? LanguageFolder, string? Language,
+    string? FrontendFolder, string? OutputFolder);
+record RootSettings(DayzSettings Dayz);
 
-/// <summary>Loads the config model + translations once and exposes it to the API.</summary>
-sealed class ModelHost
+partial class Program
 {
-    public ConfigModel Model { get; }
-    public string ConfigFolder { get; }
-    public int ClassCount { get; }
-    public IReadOnlyList<ConfigClass> ItemClasses { get; }
-
-    public ModelHost(IConfiguration config, ILogger<ModelHost> log)
-    {
-        var section = config.GetSection("Dayz");
-        ConfigFolder = section["ConfigFolder"] ?? Directory.GetCurrentDirectory();
-        string? langFolder = section["LanguageFolder"];
-        string language = section["Language"] ?? "russian";
-
-        Model = ConfigModel.LoadFolder(ConfigFolder);
-        ClassCount = Model.AllClasses().Count();
-
-        if (!string.IsNullOrWhiteSpace(langFolder) && Directory.Exists(langFolder))
-        {
-            Model.LoadTranslations(langFolder, language);
-            log.LogInformation("Translations '{Lang}': {Count} keys.", language, Model.Translations?.Count ?? 0);
+    // Static data source: same window.DS contract as the API version, but reads data.json.
+    private const string StaticDataSourceJs = """
+        "use strict";
+        // Static data source: reads a pre-generated data.json (no server needed).
+        let _data = null;
+        async function _load() {
+          if (!_data) {
+            const r = await fetch("data.json");
+            if (!r.ok) throw new Error("data.json " + r.status);
+            _data = await r.json();
+          }
+          return _data;
         }
-
-        ItemClasses = SiteExport.Listed(Model).ToList();
-    }
+        window.DS = {
+          mode: "static",
+          async status() {
+            const d = await _load();
+            return { configFolder: "(статическая сборка)", files: d.generatedFiles,
+                     classes: d.classesCount, itemClasses: d.classes.length, translations: d.translations };
+          },
+          async scopes() { return (await _load()).scopes; },
+          async classes({ search, scope, limit } = {}) {
+            const d = await _load();
+            let items = d.classes;
+            if (scope) { const sc = scope.toLowerCase(); items = items.filter(c => (c.scope || "").toLowerCase() === sc); }
+            if (search) { const s = search.toLowerCase(); items = items.filter(c =>
+              c.name.toLowerCase().includes(s) || (c.display || "").toLowerCase().includes(s)); }
+            const total = items.length, max = limit || 5000;
+            return { total, shown: Math.min(max, total), items: items.slice(0, max) };
+          },
+          async detail(path) { return (await _load()).details[path] || null; },
+        };
+        """;
 }
