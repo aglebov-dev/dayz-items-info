@@ -85,12 +85,35 @@ function markActive(path) {
 
 // ---- details ---------------------------------------------------------------
 
-async function selectClass(path) {
+// push=true adds a browser history entry (so Back/Forward work); false is used when
+// we're already reacting to a popstate / deep link.
+async function selectClass(path, push = true) {
+  const d = await DS.detail(path);
+  if (!d) return;
   activePath = path;
   markActive(path);
-  const d = await DS.detail(path);
-  if (d) renderDetails(d);
+  renderDetails(d);
+
+  const url = "#" + encodeURIComponent(path);
+  if (push && location.hash !== url) history.pushState({ path }, "", url);
 }
+
+function pathFromHash() {
+  return location.hash ? decodeURIComponent(location.hash.slice(1)) : null;
+}
+
+function showEmpty() {
+  activePath = null;
+  markActive(null);
+  el("detailCard").hidden = true;
+  el("emptyState").hidden = false;
+}
+
+window.addEventListener("popstate", (e) => {
+  const path = (e.state && e.state.path) || pathFromHash();
+  if (path) selectClass(path, false);
+  else showEmpty();
+});
 
 function renderValue(v) {
   if (!v) return "";
@@ -238,4 +261,11 @@ el("rawSlotsToggle").addEventListener("change", () => {
       " — открыт ли сервер по адресу этой страницы?";
   }
   try { await loadScopes(); } catch { /* optional */ }
+
+  // Deep link: open the class named in the URL hash (so refresh / shared links work).
+  const initPath = pathFromHash();
+  if (initPath) {
+    history.replaceState({ path: initPath }, "", location.hash);
+    selectClass(initPath, false);
+  }
 })();
